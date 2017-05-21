@@ -1,3 +1,8 @@
+---
+layout: post
+title: You're up and running!
+---
+
 Detecting multicollinearity and selection of significant variables is an
 important preparation task in prediction model generation. There are
 different technics to manage this task, here are my study notes on this
