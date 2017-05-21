@@ -1,0 +1,154 @@
+---
+title: "Feature Selection - Study Notes"
+output: html_document
+---
+
+```{r setup, include=FALSE, message=FALSE, warning=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(caret); library(glmnet); library(ipred);library(C50); library(plotly); library(earth); library(randomForest);library(MASS);library(car)
+```
+
+Detecting multicollinearity and selection of significant variables is an important preparation task in prediction model generation. There are different technics to manage this task, here are my study notes on this topic.
+
+I will use Boston data set in R to demonstrate these technics.
+
+```{r}
+data("Boston")
+boston <- as.data.frame(Boston)
+str(boston)
+```
+
+Boston data contains 1978's housing information in Boston. You can simply type ?boston to see the details. I will try to estimate the housing prices using the predictors. Medv variable is the corresponding median value of the housing prices(in $1000s) and the other variables are the predictors. 
+
+First thing generally we need to do is to create the training and testing sets.
+
+```{r}
+set.seed(1234)
+inTrain <- createDataPartition(y=boston$medv,p=0.7, list=FALSE)
+training <- boston[inTrain,]
+testing <- boston[-inTrain,]
+dim(testing);dim(training)
+```
+
+## Detecting multicollinearity
+
+If your data does not have too many dimension following command simply gives a general look of your data and you can shortly see what's going on in general. 
+
+```{r}
+plot(boston)
+```
+
+The plot of pairs shows that there are some trends in data and this gives an idea of prediction may work well but i do not go into how to interpret plots now. Instead, we can make the correlation matrix of the data which makes it easier.
+
+```{r}
+# Make a matrix of correlations of all predictors
+M <- abs(cor(training[,-14]))
+
+# Set the diagonal to zero (the correlation of a predictor with itself, it's 1, we know, so we should remove it)
+diag(M) <- 0
+
+# Find the parameters having correlation over a threshold.
+which(M > 0.7,arr.ind=T)
+```
+
+Some variables seems to have multicollinearity, we may manually remove them when building the model but since i would like to demonstrate some technics for feature selection i will not do that. 
+
+Eigen system analysis is a technic which is not only pairwise but also has more complicated analysis. When the values are close, we can say that multi-collinearity does not exist. But vice versa, like in this data, there should be a problem.
+
+```{r}
+eigen(cor(training))$values
+
+# Condition Number: Ratio of max to min Eigen values of the correlation matrix
+max(eigen(cor(training))$values)/min(eigen(cor(training))$values)
+kappa(cor(training), exact = TRUE)
+```
+
+## Exploratory analysis
+
+Intuitionally we may know that crime ratio is an important effect 
+
+```{r}
+plot_ly(training, x = ~crim, y = ~medv, color = ~crim,
+        size = ~crim, text = ~paste("Zn: ", zn),type = "scatter", mode="markers" )
+```
+
+Graph shows that crime ratio has a trend with housing prices as expected. 
+
+The same visualization can be made for other features as well. 
+
+```{r}
+plot_ly(training, x = ~indus, y = ~medv, color = ~indus,
+        size = ~indus, text = ~paste("Zn: ", zn),type = "scatter", mode="markers" )
+
+plot_ly(training, x = ~chas, y = ~medv,type = "box")
+```
+
+How about checking the variables which are found having collinearity? E.g. nox with crim. 
+
+```{r}
+plot_ly(training, x = ~nox, y = ~medv, color = ~nox,
+         size = ~nox, text = ~paste("Zn: ", zn),type = "scatter", mode="markers" )
+```
+
+Similar trend with medv exists in nox and crim features. Let's move ahead. 
+
+## Which features should we remove
+
+Variance inflation factor is a technic that can be used for feature selection.
+
+```{r}
+model = lm(medv~., data = training)
+vif(model)
+```
+
+By using vif values and feature significancy in the model, feature are eliminated to reduce variance inflation and to have the significant features in the model. 
+
+The following model seems to fit good according to this method.
+
+```{r}
+model = lm(medv~.-dis-indus-chas-age-zn-nox-crim-tax-rad, data = training)
+summary(model)
+vif(model)
+pred <- predict(model, testing)
+```
+
+The following plot shows testing values against predictions. The trend looks linear, so we can say model made OK. But there are some outliers, which means that there is some variance which is not be able to explained by the model. The study
+
+```{r}
+plot_ly(testing, x = pred, y = ~medv,type = "scatter",mode="markers")
+plot(model)
+```
+
+So we should better include some other variables, but which?
+
+The earth package implements variable importance based on Generalized cross validation (GCV), number of subset models the variable occurs (nsubsets) and residual sum of squares (RSS). I tried this method on the data as follows: 
+
+```{r}
+marsModel <- earth(medv~., data=training)
+ev <- evimp (marsModel,trim = FALSE)
+ev
+```
+
+Our model has rm, ptratio, black and lstat. So we correctly select the first 3 features. black is also in the features Earth package finds as significant but there are more important features. So let's update the model according to this.
+
+```{r}
+model = lm(medv~.-indus-chas-age-zn-black-rad, data = training)
+summary(model)
+vif(model)
+pred <- predict(model, testing)
+```
+
+After adding the features the model slightly performs better. Rsquared increased to 73% from 71% and residual standart error decreased to 4.7 from 4.8. It is another decision to have a slightly better model but with a few extra terms. Sometimes simplicity may be more important than accuracy.
+
+```{r}
+plot_ly(testing, x = pred, y = ~medv,type = "scatter",mode="markers")
+plot(model)
+```
+
+The following plot shows real values vs. predictions. Real values are light gray and as you can see some values are quite far from the trend and this is probably because of unexplained variations in the data. Perhaps there are some other factors(not in data) effecting the house prices and we have no information about them.  
+
+```{r}
+plot(testing$lstat,testing$medv, col="lightgrey")
+points(testing$lstat,pred,col="red")
+```
+
